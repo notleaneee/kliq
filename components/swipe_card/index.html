@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<!--
+  swipe_card — a Tinder-style card for Streamlit.
+
+  Drag (mouse or finger) right = like, left = dislike. Arrow keys work too.
+  When the card flies off, we send {set_num, liked} back to Python.
+
+  How it talks to Streamlit (no build step, no npm): the card lives in an
+  iframe and exchanges window.postMessage messages with the Streamlit page.
+    us   -> page  "streamlit:componentReady"     I've loaded, send me data
+    page -> us    "streamlit:render"             here are the Python args
+    us   -> page  "streamlit:setFrameHeight"     resize my iframe
+    us   -> page  "streamlit:setComponentValue"  the value Python receives
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: transparent;
+               font-family: "Source Sans Pro", sans-serif; user-select: none; }
+  #stage { position: relative; padding: 8px 12px 4px; }
+  #card { position: relative; overflow: hidden; background: #fff;
+          border: 1px solid rgba(49,51,63,.2); box-shadow: 4px 4px 0 rgba(49,51,63,.12);
+          touch-action: none; cursor: grab;
+          will-change: transform; }
+  #card.dragging { cursor: grabbing; }
+  #card.animate { transition: transform .3s ease-out; }
+  #card img { display: block; width: 100%; max-height: 420px; object-fit: contain;
+              background: #fff; pointer-events: none; }
+  .stamp { position: absolute; top: 18px; padding: 4px 12px; border: 4px solid; font-size: 30px; font-weight: 800; letter-spacing: 2px;
+           opacity: 0; pointer-events: none; background: rgba(255,255,255,.75); }
+  #like { left: 18px; color: #1a9850; border-color: #1a9850; transform: rotate(-15deg); }
+  #nope { right: 18px; color: #d73027; border-color: #d73027; transform: rotate(15deg); }
+  #hint { text-align: center; color: #888; font-size: 13px; padding: 6px 0 2px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="card">
+    <img id="img" alt="">
+    <div class="stamp" id="like">LIKE</div>
+    <div class="stamp" id="nope">NOPE</div>
+  </div>
+  <div id="hint">Drag or use ← →</div>
+</div>
+<script>
+  const THRESHOLD = 100;          // pixels of drag needed to count as a swipe
+  const card = document.getElementById("card");
+  const img = document.getElementById("img");
+  const likeStamp = document.getElementById("like");
+  const nopeStamp = document.getElementById("nope");
+  let setNum = null, startX = 0, dx = 0, dragging = false, done = false;
+
+  function send(type, data) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+  }
+  function fitHeight() {
+    send("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+  }
+
+  function place(x, animate) {
+    card.classList.toggle("animate", animate);
+    card.style.transform = `translateX(${x}px) rotate(${x / 20}deg)`;
+    likeStamp.style.opacity = Math.max(0, Math.min(x / THRESHOLD, 1));
+    nopeStamp.style.opacity = Math.max(0, Math.min(-x / THRESHOLD, 1));
+  }
+
+  function decide(liked) {
+    if (done || setNum === null) return;
+    done = true;
+    place(liked ? window.innerWidth * 1.5 : -window.innerWidth * 1.5, true);
+    // Wait for the fly-out animation, then tell Python.
+    setTimeout(() => send("streamlit:setComponentValue",
+                          { value: { set_num: setNum, liked: liked }, dataType: "json" }), 250);
+  }
+
+  card.addEventListener("pointerdown", (e) => {
+    if (done) return;
+    dragging = true; startX = e.clientX; dx = 0;
+    card.setPointerCapture(e.pointerId);
+    card.classList.add("dragging");
+  });
+  card.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    dx = e.clientX - startX;
+    place(dx, false);
+  });
+  function release() {
+    if (!dragging) return;
+    dragging = false;
+    card.classList.remove("dragging");
+    if (Math.abs(dx) >= THRESHOLD) decide(dx > 0);
+    else place(0, true);                       // not far enough: snap back
+  }
+  card.addEventListener("pointerup", release);
+  card.addEventListener("pointercancel", release);
+
+  // Arrow keys. Listen on the Streamlit page too, so keys work without first
+  // clicking into this iframe. Ignore them while typing, or when this card is
+  // hidden (e.g. another tab is open).
+  function onKey(e) {
+    const tag = (e.target && e.target.tagName) || "";
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || e.target.isContentEditable) return;
+    const frame = window.frameElement;
+    if (frame && frame.offsetParent === null) return;
+    if (e.key === "ArrowRight") { e.preventDefault(); decide(true); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); decide(false); }
+  }
+  window.addEventListener("keydown", onKey);
+  let parentDoc = null;
+  try { parentDoc = window.parent.document; parentDoc.addEventListener("keydown", onKey); }
+  catch (err) { parentDoc = null; }            // cross-origin: keys work only inside the card
+  window.addEventListener("pagehide", () => {
+    if (parentDoc) parentDoc.removeEventListener("keydown", onKey);
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.data.type !== "streamlit:render") return;
+    const args = event.data.args;
+    if (args.set_num !== setNum) {             // a new card: reset everything
+      setNum = args.set_num; done = false;
+      place(0, false);
+      img.alt = args.alt || "";
+      img.onload = fitHeight;
+      img.src = args.image;
+    }
+    fitHeight();
+  });
+
+  send("streamlit:componentReady", { apiVersion: 1 });
+</script>
+</body>
+</html>

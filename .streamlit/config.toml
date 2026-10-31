@@ -1,0 +1,12 @@
+[client]
+# "viewer" hides the developer items in the top-right menu (Deploy, Rerun,
+# Clear cache) but keeps Settings (light/dark theme) and Print.
+toolbarMode = "viewer"
+
+[theme]
+# Boxy look: square corners everywhere, visible borders on inputs,
+# and a line between the sidebar and the page.
+baseRadius = "none"
+buttonRadius = "none"
+showWidgetBorder = true
+showSidebarBorder = true
